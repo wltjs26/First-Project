@@ -1,200 +1,144 @@
-#라이브러리 열기
+# Load libraries
 library(dplyr)
 library(ggplot2)
 library(e1071)
-library(caret) ## 원핫 인코딩 할 수 있음 
+library(caret) ## Can be used for one-hot encoding
 library(pROC)
-library(rpart) # decision tree 분류모델 만들기 
-library(randomForest) # random forest 패키지 
+library(rpart) # Create decision tree classification model
+library(randomForest) # Random forest package
 
-# 데이터 불러오리
+# Load the data
 heart <- read.csv("heart.csv", header=TRUE)
 head(heart)
 
-#데이터 구조 확인
+# Check the data structure
 str(heart)
 summary(heart)
 table(is.na(heart))
 
 colnames(heart)
 
-# EDA: 데이터 성향 확인하기
+# EDA: Explore data trends
 # 1. age
-ggplot(heart, aes(x=age, fill=factor(age)))+
+ggplot(heart, aes(x=age, fill=factor(age))) +
   geom_bar()
 
 # 2. sex
-ggplot(heart, aes(x=sex, fill=factor(target)))+
-  geom_bar(position = "dodge")+
-  labs(title="sex distribution",
-       x="sex",
-       y="counts",
-       fill="target")
+ggplot(heart, aes(x=sex, fill=factor(target))) +
+  geom_bar(position = "dodge") +
+  labs(title="Sex Distribution",
+       x="Sex",
+       y="Counts",
+       fill="Target")
 
 # 3. cp
-ggplot(heart, aes(x=cp, fill=factor(target)))+
+ggplot(heart, aes(x=cp, fill=factor(target))) +
   geom_bar(position = "dodge")
 
 # trestbps
-ggplot(heart, aes(x=trestbps, fill=factor(trestbps)))+
+ggplot(heart, aes(x=trestbps, fill=factor(trestbps))) +
   geom_bar(position = "dodge")
 
-# 수치형: boxplot으로 이상치 확인하기
-# theme_minimal(): 뒷 배경을 하얗게 해서 깨끗한 그래프 위함
-ggplot(heart, aes(x=target, y=chol, group=target, fill=factor(target)))+
-  geom_boxplot()+
-  labs(title="boxplot - chol",
-       x="target",
-       y="chol",
-       fill="target")+
+# Detect outliers using boxplots
+# theme_minimal(): Set white background for a clean graph
+ggplot(heart, aes(x=target, y=chol, group=target, fill=factor(target))) +
+  geom_boxplot() +
+  labs(title="Boxplot - Chol",
+       x="Target",
+       y="Chol",
+       fill="Target") +
   theme_minimal()
 
-ggplot(heart, aes(x=target, y=trestbps, group=target, fill=factor(target)))+
-  geom_boxplot()+
-  labs(title="boxplot - chol",
-       x="target",
-       y="trestbps",
-       fill="target")+
-  theme_minimal()
-
-ggplot(heart, aes(x=target, y=thalach, group=target, fill=factor(target)))+
-  geom_boxplot()+
-  labs(title="boxplot - chol",
-       x="target",
-       y="thalach",
-       fill="target")+
-  theme_minimal()
-
-ggplot(heart, aes(x=target, y=oldpeak, group=target, fill=factor(target)))+
-  geom_boxplot()+
-  labs(title="boxplot - chol",
-       x="target",
-       y="oldpeak",
-       fill="target")+
-  theme_minimal()
-
-############################################
-# 이상치 제거하는 함수 만들기
+# Outlier removal function
 remove_or <- function (x, lower_percentile=0.05,upper_percentile=0.95){
   lower_limit <- quantile(x, lower_percentile)
   upper_limit <- quantile(x, upper_percentile)
   return(x[x >=lower_limit & x<= upper_limit])
 }
 
-# 각 수치형 열에 대해 이상치 확인
+# Check for outliers in each numeric column
 numeric_columns <- sapply(heart, is.numeric)
 outlier_indices <- lapply(heart[, numeric_columns], function(col) {
   remove_or(col)
 })
 
-
-# 모든 열에서 동일한 행 기준으로 이상치 제거
+# Remove common rows across all columns
 common_rows <- Reduce(intersect, lapply(outlier_indices, rownames))
 heart_cleaned <- heart[common_rows, ]
 
-############################################
-
-# 타겟이 범주형임을 확인, 원 핫 인코딩 하기 >> library(caret)이용
-# dummyVars, predict 같이 사용해야 원 핫 인코딩 완료된다. 
+# Confirm target is categorical, perform one-hot encoding using caret library
 heart_encoded <- dummyVars(~., data=heart)
-# 설명: dummyVars: 데이터셋의 변수를 더미 변수로 변환하는데 사용
-# ~., 는 모든 변수를 의미, 모든 변수를 대상으로 원핫인코딩 수행 
 data_transformed <- data.frame(predict(heart_encoded, newdata=heart))
-#predict: caret 패키지에 사용되며 모델을 사용해 새로운 데이터 예측
-# predict(heart_encoded, data=heart) heart_encoded로 정의된 원핫인코딩을
-# 기반으로 heart 데이터 셋을 변환하는 과정 
-# 원핫 인코딩 결과 모두 수치형으로 변환 완료 
 str(data_transformed)
 
-# 정규화 진행: 머신러닝 모델의 성능을 향상시키기 위함. 
-# 데이터 스케일 일관성 유지, 
-#  preProcess() 함수는 데이터 정규화를 수행합니다. 
-# method = c("scale")는 각 변수를 평균 0, 표준편차 1로 정규화하도록 지정합니다. 
+# Normalize data for machine learning model performance improvement
 preprocessed_heart <- preProcess(data_transformed, method=c("scale"))
-
-#정규화 된 데이터 출력
 normalized_data <- predict(preprocessed_heart, newdata=data_transformed)
 print(normalized_data)
 
-
-# train, test data 분류하기
+# Split data into train and test sets
 index <- sample(1:nrow(normalized_data), 0.7*nrow(normalized_data))
-train_data <- normalized_data[index,]
-test_data <- normalized_data[-index,]
-test_data1 <- test_data[,-14] # test data에서 target 제외하기 
-nrow(test_data) #개수 확인 
-nrow(train_data) #개수 확인
+train_data <- normalized_data[index, ]
+test_data <- normalized_data[-index, ]
+test_data1 <- test_data[, -14]  # Exclude target variable from test data
+nrow(test_data)  # Check count
+nrow(train_data)  # Check count
 ncol(test_data)
 head(test_data1)
 head(test_data)
 
-# 분류 모델 만들기 : 1. decision tree
-model_dc <- rpart(target~., data=train_data, method="class")
+# Create classification models: 1. Decision Tree
+model_dc <- rpart(target ~ ., data=train_data, method="class")
 
-#모델 시각화
-plot(model_dc) #트리가 어떻게 나뉘어졌는지 시각화 가능
+# Visualize the model
+plot(model_dc)
 text(model_dc, use.n=TRUE)
 
-#예측 및 평가
+# Predict and evaluate
 prediction_dc <- predict(model_dc, newdata=test_data1, type="class")
-pr_dc <- ifelse(as.numeric(prediction_dc)>1.0,1,0)
-true_dc <- ifelse(test_data$target>1.0,1,0)
+pr_dc <- ifelse(as.numeric(prediction_dc)>1.0, 1, 0)
+true_dc <- ifelse(test_data$target>1.0, 1, 0)
 
 length(prediction_dc)
 
-#혼동행렬 만들기
+# Confusion matrix
 cm_dc <- table(Actual=true_dc, Predicted=pr_dc)
 print(cm_dc)
 
-# 평가지표 만들기
-TP <- cm_dc[1,1]
-FP <- cm_dc[2,1]
-TN <- cm_dc[2,2]
-FN <- cm_dc[1,2]
+# Evaluate metrics
+TP <- cm_dc[1, 1]
+FP <- cm_dc[2, 1]
+TN <- cm_dc[2, 2]
+FN <- cm_dc[1, 2]
 
-# accuracy
 accuracy_dc <- (TP+TN)/(sum(cm_dc))
-
-# precision
 precision_dc <- TP / (TP+FP)
-
-# recall, sensitivity
 recall_dc <- TP / (TP + FN) 
 F1_dc <- (2* (precision_dc*recall_dc)) /(precision_dc+recall_dc)
-
 
 results_dc <- data.frame(accuracy_dc, precision_dc, recall_dc, F1_dc)
 print(results_dc)
 
+## Continue with Random Forest for classification and prediction
+# Create the model
+model_rf <- randomForest(target ~ ., data=train_data, ntree=500, importance=TRUE)
+print(model_rf)
 
-## random tree로 분류하고 예측하기
-# 모델 만들기
-model_rf <- randomForest(target~., data=train_data, ntree=500, importance=TRUE)
-# ntree: 의사결정 나무 개수 지정, 여러개 나무를 앙상블 해서 사용
-# 높은 값으로 설정할 수록 모델의 예측 성능 향상 가능, 단 시간 소요 증가 
-# importance=TRUE, 모델의 변수의 중요도를 계산하고 반환할지 여부 지정
-# 중요도를 계산하면 각 변수의 예측에 미치는 영향력 평가 가능 
-print(model_rf) # 학습된 모델 요약 정보 
-
-#모델 예측하기 ## 여기서 데이터 넣을 때 newdata= 하고 넣기 !!!
+# Predict using the model
 prediction_rf <- predict(model_rf, newdata=test_data1)
-
-
-pr_rf <- ifelse(prediction_rf>1.0,1,0)
+pr_rf <- ifelse(prediction_rf>1.0, 1, 0)
 length(pr_rf)
 
-
-#혼동행렬 만들기
+# Confusion matrix
 cm_rf <- table(Actual=true_dc, Predicted=pr_rf)
 print(cm_rf)
 
-# 행렬 값 계산하기
-TP <- cm_rf[1,1]
-FN <- cm_rf[1,2]
-FP <- cm_rf[2,1]
-TN <- cm_rf[2,2]
+# Calculate metrics
+TP <- cm_rf[1, 1]
+FN <- cm_rf[1, 2]
+FP <- cm_rf[2, 1]
+TN <- cm_rf[2, 2]
 
-# Accuracy
 ac_rf <- (TP+TN)/ sum(cm_rf)
 recall_rf <- (TP)/(TP+FP)
 precision_rf <- TP / (TP+FN)
@@ -203,30 +147,25 @@ F1_rf <- (2* (precision_rf*recall_rf)) /(precision_rf+recall_rf)
 result_rf <- data.frame(ac_rf, recall_rf, precision_rf, F1_rf)
 print(result_rf)
 
-
-## glm: 로지스틱 회귀 모델 적용
-train_data$target <- ifelse(train_data$target>1.0,1,0)
-model_glm <- glm(target~., data=train_data, family=binomial)
-# family=binomial: 종속변수가 이항분포(2개의 클래스)를 따르는 경우 사용 
-
-# 예측하기
+## Apply Logistic Regression (GLM)
+train_data$target <- ifelse(train_data$target>1.0, 1, 0)
+model_glm <- glm(target ~ ., data=train_data, family=binomial)
 prediction_glm <- predict(model_glm, newdata=test_data1, type="response")
-pr_glm <- ifelse(prediction_glm>0.5,1,0)
+pr_glm <- ifelse(prediction_glm>0.5, 1, 0)
 
 nrow(test_data1)
 length(pr_glm)
 
-#혼동행렬
+# Confusion matrix
 cm_glm <- table(Actual=true_dc, Predicted=pr_glm)
 print(cm_glm)
 
-#측정값 계산하기
-TP <- cm_glm[1,1]
-FN <- cm_glm[1,2]
-FP <- cm_glm[2,1]
-TN <- cm_glm[2,2]
+# Calculate metrics
+TP <- cm_glm[1, 1]
+FN <- cm_glm[1, 2]
+FP <- cm_glm[2, 1]
+TN <- cm_glm[2, 2]
 
-#계산하기
 accuracy_glm <- (TP+TN) / sum(cm_glm)
 precision_glm <- (TP) / (TP+FP)
 recall_glm <- TP/(TP+FN)
@@ -235,48 +174,40 @@ F1_glm <- (2* (precision_glm*recall_glm)) /(precision_gbm+recall_glm)
 result_glm <- data.frame(accuracy_glm, precision_glm, recall_glm, F1_glm)
 print(result_glm)
 
-###gradient boosting 적용하기
+### Apply Gradient Boosting
 
-model_gbm <- gbm(target~., data=train_data, distribution = "bernoulli", 
-                 n.trees=100, interaction.depth = 4)
-# distribution="bernoulli", 종속변수가 이항 분포를 따르는 경우 사용
-# n.trees: 생성할 트리 모델의 개수를 지정, 많이 사용하면 성능 증가, 과적합 위험
-# interaction.depth: 트리의 최대 깊이 지정, 
-# 깊이가 깊을수록 복잡성이 증가
-
-# 예측하기
-#일반적으로 0.5를 기준으로 하여 확률값이 0.5보다 크면 양성 클래스(1), 작으면 음성 클래스(0)로 분류합니다.
+model_gbm <- gbm(target ~ ., data=train_data, distribution="bernoulli", 
+                 n.trees=100, interaction.depth=4)
 prediction_gbm <- predict(model_gbm, newdata=test_data1, 
                           n.trees=100, interaction.depth=4)
-pr_gbm <- ifelse(prediction_gbm>0.5,1,0)
+pr_gbm <- ifelse(prediction_gbm>0.5, 1, 0)
 
-# 혼동 행렬 만들기
+# Confusion matrix
 cm_gbm <- table(Actual=true_dc, Predicted=pr_gbm)
 print(cm_gbm)
 
-#측정값 계산하기
-TP <- cm_gbm[1,1]
-FN <- cm_gbm[1,2]
-FP <- cm_gbm[2,1]
-TN <- cm_gbm[2,2]
+# Calculate metrics
+TP <- cm_gbm[1, 1]
+FN <- cm_gbm[1, 2]
+FP <- cm_gbm[2, 1]
+TN <- cm_gbm[2, 2]
 
-#계산하기
 accuracy_gbm <- (TP+TN) / sum(cm_glm)
 precision_gbm <- (TP) / (TP+FP)
 recall_gbm <- TP/(TP+FN)
 F1_gbm <- (2* (precision_gbm*recall_gbm)) /(precision_gbm+recall_gbm)
 
-
-## 재현율만 비교하기
-total_recall <- data.frame(results_dc$recall_dc, result_rf$recall_rf, result_glm$recall_glm, result_gbm$recall_gbm)
+## Compare Recall Only
+total_recall <- data.frame(results_dc$recall_dc, result_rf$recall_rf, 
+                           result_glm$recall_glm, result_gbm$recall_gbm)
 ggplot(total_recall)+
   geom_bar()
 
 total_recall <- data.frame(
   model <- c("DC", "RF", "GLM", "GBM"),
-  recall<-c(results_dc$recall_dc, result_rf$recall_rf, result_glm$recall_glm, result_gbm$recall_gbm)
+  recall<-c(results_dc$recall_dc, result_rf$recall_rf, 
+            result_glm$recall_glm, result_gbm$recall_gbm)
 )
-
 
 colnames(total_recall) <- c("method","recall")
 
@@ -286,15 +217,14 @@ ggplot(total_recall, aes(x=method, y=recall, fill=model))+
 
 
 ggplot(total_recall, aes(x = model, y = recall, fill = model)) +
-  geom_bar(stat = "identity") +  # stat = "identity"로 설정하여 실제 값에 따라 막대 그래프를 그립니다
+  geom_bar(stat = "identity") +  
   labs(title = "Recall by Model", x = "Model", y = "Recall") +
-  geom_text(aes(label=sprintf("%.2f", recall)))
+  geom_text(aes(label=sprintf("%.2f", recall))) +
   theme_minimal() +
   theme(axis.text.x = element_text(angle = 45, hjust = 1))
 
 
-
-## accuracy 비교하기
+## Compare Accuracy
 total_accuracy <- data.frame(results_dc$accuracy_dc, result_rf$ac_rf, 
                              result_glm$accuracy_glm, result_gbm$accuracy_gbm)
 
@@ -311,18 +241,15 @@ ggplot(total_recall, aes(x=method, y=accuracy, fill=method))+
   geom_text(aes(label=sprintf("%.2f", accuracy)))
 
 
-### 이상치제거한 데이터로 똑같이 돌려보기 ################
-
-# Z-score 계산
+### Run the same process with outlier-removed data
+# Calculate Z-scores
 z_scores_trestbps <- scale(heart$trestbps)
 z_scores_chol <- scale(heart$chol)
 z_scores_thalach <- scale(heart$thalach)
 z_scores_oldpeak <- scale(heart$oldpeak)
 
-
-# Z-score 기반 이상치 제거
-# 일반적으로 2또는 3을 넘어가는 경우 이상치로 간주함
-threshold <- 3  # 임계값 설정
+# Z-score based outlier removal
+threshold <- 3
 outliers <- which(abs(z_scores_trestbps) > threshold)
 outliers1 <- which(abs(z_scores_chol) > threshold)
 outliers2 <- which(abs(z_scores_thalach) > threshold)
@@ -332,10 +259,8 @@ heart <- heart[-outliers1, ]
 heart <- heart[-outliers2, ]
 heart <- heart[-outliers3, ]
 
-nrow(heart) # 전체 outlier 18개 삭제함
+nrow(heart)  # Removed a total of 18 outliers
 
-#결과: 분류, 예측 모델 똑같이 돌려본 결과 이상치 제거하니까
-# 최적의 모델이 달라지고, 정확도가 더 높아졌음.
-# 이상치 제거하는거 중요하다. 
-
-
+# Result: Running classification and prediction models with outlier removal
+# resulted in different optimal models and improved accuracy.
+# Outlier removal is important.
